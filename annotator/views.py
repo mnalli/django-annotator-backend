@@ -10,7 +10,7 @@ from django.conf import settings
 
 import json, re
 
-from annotator.models import Document, Annotation
+from .models import Document, Annotation
 
 class BaseStorageView(View):
 	def dispatch(self, request, *args, **kwargs):
@@ -19,29 +19,29 @@ class BaseStorageView(View):
 		if request.method in ('PUT', 'POST'):
 			if not re.match("application/json(; charset=UTF-8)?", request.META['CONTENT_TYPE'], re.I):
 				return HttpResponseBadRequest("Request must have application/json content type.")
-				
+
 			try:
 				body = json.loads(request.body.decode("utf8"))
 			except:
 				 return HttpResponseBadRequest("Request body is not JSON.")
-				 
+
 			if not isinstance(body, dict):
 				return HttpResponseBadRequest("Request body is not a JSON object.")
-			
+
 			# Interpolate the parsed JSON body into the arg list.
 			args = [body] + list(args)
 
 		# All requets return JSON on success, or some other HttpResponse.
 		try:
 			ret = super(BaseStorageView, self).dispatch(request, *args, **kwargs)
-			
+
 			if isinstance(ret, HttpResponse):
 				return ret
-				
+
 			# DELETE requests, when successful, return a 204 NO CONTENT.
 			if request.method == 'DELETE':
 				return HttpResponse(status=204)
-				
+
 			ret = json.dumps(ret)
 			resp = HttpResponse(ret, mimetype="application/json")
 			resp["Content-Length"] = len(ret)
@@ -55,25 +55,25 @@ class BaseStorageView(View):
 		except Exception as e:
 			if settings.DEBUG: raise # when debugging, don't trap
 			return HttpResponseServerError(str(e))
-			
+
 		return ret
 
 class Root(BaseStorageView):
 	http_method_names = ['get']
-	
+
 	def get(self, request):
 		return {
 			"name": "Django Annotator Store",
 			"version": "0.0.1",
 		}
-	
+
 class Index(BaseStorageView):
 	http_method_names = ['get', 'post']
-	
+
 	def get(self, request):
 		# index. Returns ALL annotation objects. Seems kind of not scalable.
 		return Annotation.as_list()
-	
+
 	def post(self, request, client_data):
 		# create. Creates an annotation object and returns a 303.
 		obj = Annotation()
@@ -90,29 +90,29 @@ class Index(BaseStorageView):
 
 class Annot(BaseStorageView):
 	http_method_names = ['get', 'put', 'delete']
-	
+
 	def get(self, request, guid):
 		# read. Returns the annotation.
 		obj = Annotation.objects.get(guid=guid) # exception caught by base view
 		return obj.as_json(request.user)
-	
+
 	def put(self, request, client_data, guid):
 		# update. Updates the annotation.
 		obj = Annotation.objects.get(guid=guid) # exception caught by base view
-		
+
 		if not obj.can_edit(request.user):
 			raise PermissionDenied("You do not have permission to modify someone else's annotation.")
-		
+
 		obj.update_from_json(client_data)
 		obj.save()
 		return obj.as_json(request.user) # Spec wants redirect but warns of browser bugs, so return the object.
-		
+
 	def delete(self, request, guid):
 		obj = Annotation.objects.get(guid=guid) # exception caught by base view
-		
+
 		if not obj.can_edit(request.user):
 			raise PermissionDenied("You do not have permission to delete someone else's annotation.")
-		
+
 		obj.delete()
 		return None # response handled by the base view
 
@@ -128,12 +128,11 @@ class Search(BaseStorageView):
 			"total": qs.count(),
 			"rows": Annotation.as_list(qs=qs, user=request.user)
 		}
-		
+
 class EditorView(TemplateView):
 	template_name = 'annotator/editor.html'
 	def get_context_data(self, **kwargs):
 		context = super(EditorView, self).get_context_data(**kwargs)
-		context['storage_api_base_url'] = reverse('annotator.root')[0:-1] # chop off trailing slash 
+		context['storage_api_base_url'] = reverse('annotator.root')[0:-1] # chop off trailing slash
 		context['document'] = get_object_or_404(Document, id=kwargs['doc_id'])
 		return context
-
