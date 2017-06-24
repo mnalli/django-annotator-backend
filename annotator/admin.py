@@ -1,5 +1,4 @@
 from django.contrib import admin
-from .models import Document, Annotation
+from .models import Annotation
 
-admin.site.register(Document)
 admin.site.register(Annotation)
