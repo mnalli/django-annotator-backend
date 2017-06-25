@@ -31,12 +31,58 @@ position and content of an annotation within a specified document:
 """
 
 from rest_framework import serializers
+from django.contrib.auth.models import User
+
+# class UserSerializer(serializers.ModelSerializer):
+#     class Meta:
+#         model = User
+#         fields = ('username',)
+#
+#
+#
+# class UsernameField(serializers.StringRelatedField):
+#     def __init__(self, **kwargs):
+#         kwargs['read_only'] = False
+#         kwargs['queryset'] = User.objects.all()
+#         super(serializers.StringRelatedField, self).__init__(**kwargs)
+#
+#     def to_internal_value(self, value):
+#         return value
+
 from .models import Annotation
 
 class AnnotationSerializer(serializers.ModelSerializer):
     # annotator_schema_vision = "v1.0"
+    ranges = serializers.JSONField()
+    permissions = serializers.JSONField()
+    # user = UsernameField()
 
     class Meta:
         model = Annotation
-        fields = ('id', 'created', 'updated', 'text', 'quote', 'uri', 'user')
+        fields = '__all__'
         read_only_fields = ('id', 'created', 'updated')
+
+
+    # def create(self, validated_data):
+    #     print('SONO QUI----------------------------------')
+    #     username = validated_data['user']
+    #     validated_data['user'] = User.objects.get(username=username)
+    #     annotation = Annotation.objects.create(**validated_data)
+    #     return annotation
+    #
+    # def update(self, instance, validated_data):
+    #     raise_errors_on_nested_writes('update', self, validated_data)
+    #     info = model_meta.get_field_info(instance)
+    #
+    #     # Simply set each attribute on the instance, and then save it.
+    #     # Note that unlike `.create()` we don't need to treat many-to-many
+    #     # relationships as being a special case. During updates we already
+    #     # have an instance pk for the relationships to be associated with.
+    #     for attr, value in validated_data.items():
+    #         if attr in info.relations and info.relations[attr].to_many:
+    #             set_many(instance, attr, value)
+    #         else:
+    #             setattr(instance, attr, value)
+    #     instance.save()
+    #
+    #     return instance

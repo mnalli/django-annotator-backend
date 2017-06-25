@@ -1,10 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
-
 from rest_framework import generics
-
-from django.urls import reverse
 
 
 class Root(APIView):
@@ -18,72 +14,72 @@ class Root(APIView):
 
 from .models import Annotation
 from .serializers import AnnotationSerializer
-from rest_framework import mixins
+from . import mixins
+from rest_framework.permissions import IsAuthenticated
 
-class AnnotationList(generics.ListAPIView):
+class AnnotationList(generics.ListAPIView, mixins.CreateModelMixin):
 
 	queryset = Annotation.objects.all()
 	serializer_class = AnnotationSerializer
-
+	permission_classes = (IsAuthenticated,)
 
 	def post(self, request, *args, **kwargs):
+		# print(request.data)
 		return self.create(request, *args, **kwargs)
 
-	def create(self, request, *args, **kwargs):
-		serializer = self.get_serializer(data=request.data)
-		serializer.is_valid(raise_exception=True)
-		instance = self.perform_create(serializer)
-		headers = self.get_success_headers(instance.id)
-		return Response(serializer.data, status=status.HTTP_303_SEE_OTHER, headers=headers)
-
-	def perform_create(self, serializer):
-		"Returns the instance of the created model."
-		return serializer.save()
-
-	def get_success_headers(self, pk):
-		return {'Location': reverse('annotator.annotation', args=[pk])}
+	# def initial(self, request, *args, **kwargs):
+	# 	"""
+	# 	Runs anything that needs to occur prior to calling the method handler.
+	# 	"""
+	# 	self.format_kwarg = self.get_format_suffix(**kwargs)
+	#
+	# 	print('REQUEST ----', request.data)
+	# 	# Perform content negotiation and store the accepted info on the request
+	# 	neg = self.perform_content_negotiation(request)
+	# 	request.accepted_renderer, request.accepted_media_type = neg
+	#
+	# 	# Determine the API version, if versioning is in use.
+	# 	version, scheme = self.determine_version(request, *args, **kwargs)
+	# 	request.version, request.versioning_scheme = version, scheme
+	#
+	# 	# Ensure that the incoming request is permitted
+	# 	self.perform_authentication(request)
+	# 	self.check_permissions(request)
+	# 	self.check_throttles(request)
+	# 	print('authentication success')
 
 
 class AnnotationDetail(generics.RetrieveDestroyAPIView, mixins.UpdateModelMixin):
 
 	queryset = Annotation.objects.all()
 	serializer_class = AnnotationSerializer
+	permission_classes = (IsAuthenticated,)
 
 	def put(self, request, *args, **kwargs):
 		return self.update(request, *args, **kwargs)
 
+	# Don't know if useful
 	def patch(self, request, *args, **kwargs):
 		return self.partial_update(request, *args, **kwargs)
 
-	def update(self, request, *args, **kwargs):
-		partial = kwargs.pop('partial', False)
-		instance = self.get_object()
-		serializer = self.get_serializer(instance, data=request.data, partial=partial)
-		serializer.is_valid(raise_exception=True)
-		self.perform_update(serializer)
 
-		if getattr(instance, '_prefetched_objects_cache', None):
-	   	# If 'prefetch_related' has been applied to a queryset, we need to
-	   	# forcibly invalidate the prefetch cache on the instance.
-			instance._prefetched_objects_cache = {}
+from .pagination import SearchPagination
 
-		headers = self.get_success_headers(instance.id)
-		return Response(serializer.data, status=status.HTTP_303_SEE_OTHER, headers=headers)
+class SearchView(generics.ListAPIView):
 
-	def perform_update(self, serializer):
-		"Returns the instance of the created model."
-		return serializer.save()
+	queryset = Annotation.objects.all()
+	serializer_class = AnnotationSerializer
+	pagination_class = SearchPagination
+	permission_classes = (IsAuthenticated,)
 
-	def partial_update(self, request, *args, **kwargs):
-		kwargs['partial'] = True
-		return self.update(request, *args, **kwargs)
-
-	def get_success_headers(self, pk):
-		return {'Location': reverse('annotator.annotation', args=[str(pk)])}
+	def get_queryset(self):
+		queryset = self.queryset
+		uri = self.request.GET['uri']
+		return queryset.all().filter(uri=uri)
 
 
 import jwt, datetime
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required # FIXME
 
 class TokenView(APIView):
 
