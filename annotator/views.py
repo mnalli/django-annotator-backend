@@ -1,138 +1,110 @@
-from django.core.exceptions import PermissionDenied, ObjectDoesNotExist
-from django.core.urlresolvers import reverse
-from django.http import HttpResponse, HttpResponseServerError, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseForbidden
-from django.views.generic import View
-from django.views.generic.base import TemplateView
-from django.shortcuts import get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth.decorators import permission_required
-from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import generics
 
-import json, re
 
-from .models import Document, Annotation
-
-class BaseStorageView(View):
-	def dispatch(self, request, *args, **kwargs):
-		# All PUT/POST requests must contain a JSON body. We decode that here and
-		# interpolate the value into the view argument list.
-		if request.method in ('PUT', 'POST'):
-			if not re.match("application/json(; charset=UTF-8)?", request.META['CONTENT_TYPE'], re.I):
-				return HttpResponseBadRequest("Request must have application/json content type.")
-
-			try:
-				body = json.loads(request.body.decode("utf8"))
-			except:
-				 return HttpResponseBadRequest("Request body is not JSON.")
-
-			if not isinstance(body, dict):
-				return HttpResponseBadRequest("Request body is not a JSON object.")
-
-			# Interpolate the parsed JSON body into the arg list.
-			args = [body] + list(args)
-
-		# All requets return JSON on success, or some other HttpResponse.
-		try:
-			ret = super(BaseStorageView, self).dispatch(request, *args, **kwargs)
-
-			if isinstance(ret, HttpResponse):
-				return ret
-
-			# DELETE requests, when successful, return a 204 NO CONTENT.
-			if request.method == 'DELETE':
-				return HttpResponse(status=204)
-
-			ret = json.dumps(ret)
-			resp = HttpResponse(ret, mimetype="application/json")
-			resp["Content-Length"] = len(ret)
-			return resp
-		except ValueError as e:
-			return HttpResponseBadRequest(str(e))
-		except PermissionDenied as e:
-			return HttpResponseForbidden(str(e))
-		except ObjectDoesNotExist as e:
-			return HttpResponseNotFound(str(e))
-		except Exception as e:
-			if settings.DEBUG: raise # when debugging, don't trap
-			return HttpResponseServerError(str(e))
-
-		return ret
-
-class Root(BaseStorageView):
-	http_method_names = ['get']
+class Root(APIView):
 
 	def get(self, request):
-		return {
+		return Response({
 			"name": "Django Annotator Store",
 			"version": "0.0.1",
-		}
+		})
 
-class Index(BaseStorageView):
-	http_method_names = ['get', 'post']
 
+from .models import Annotation
+from .serializers import AnnotationSerializer
+from . import mixins
+from rest_framework.permissions import IsAuthenticated
+
+class AnnotationList(generics.ListAPIView, mixins.CreateModelMixin):
+
+	queryset = Annotation.objects.all()
+	serializer_class = AnnotationSerializer
+	permission_classes = (IsAuthenticated,)
+
+	def post(self, request, *args, **kwargs):
+		# print(request.data)
+		return self.create(request, *args, **kwargs)
+
+	# def initial(self, request, *args, **kwargs):
+	# 	"""
+	# 	Runs anything that needs to occur prior to calling the method handler.
+	# 	"""
+	# 	self.format_kwarg = self.get_format_suffix(**kwargs)
+	#
+	# 	print('REQUEST ----', request.data)
+	# 	# Perform content negotiation and store the accepted info on the request
+	# 	neg = self.perform_content_negotiation(request)
+	# 	request.accepted_renderer, request.accepted_media_type = neg
+	#
+	# 	# Determine the API version, if versioning is in use.
+	# 	version, scheme = self.determine_version(request, *args, **kwargs)
+	# 	request.version, request.versioning_scheme = version, scheme
+	#
+	# 	# Ensure that the incoming request is permitted
+	# 	self.perform_authentication(request)
+	# 	self.check_permissions(request)
+	# 	self.check_throttles(request)
+	# 	print('authentication success')
+
+
+class AnnotationDetail(generics.RetrieveDestroyAPIView, mixins.UpdateModelMixin):
+
+	queryset = Annotation.objects.all()
+	serializer_class = AnnotationSerializer
+	permission_classes = (IsAuthenticated,)
+
+	def put(self, request, *args, **kwargs):
+		return self.update(request, *args, **kwargs)
+
+	# Don't know if useful
+	def patch(self, request, *args, **kwargs):
+		return self.partial_update(request, *args, **kwargs)
+
+
+from .pagination import SearchPagination
+
+class SearchView(generics.ListAPIView):
+
+	queryset = Annotation.objects.all()
+	serializer_class = AnnotationSerializer
+	pagination_class = SearchPagination
+	permission_classes = (IsAuthenticated,)
+
+	def get_queryset(self):
+		queryset = self.queryset
+		uri = self.request.GET['uri']
+		return queryset.all().filter(uri=uri)
+
+
+import jwt, datetime
+from django.contrib.auth.decorators import login_required # FIXME
+
+class TokenView(APIView):
+
+	# Replace these with your details
+	CONSUMER_KEY = 'yourconsumerkey'
+	CONSUMER_SECRET = 'yourconsumersecret'
+
+	# Only change this if you're sure you know what you're doing
+	CONSUMER_TTL = 86400
+
+	@login_required
 	def get(self, request):
-		# index. Returns ALL annotation objects. Seems kind of not scalable.
-		return Annotation.as_list()
+		encoded_token = self.generate_token(request.user)
+		print(encoded_token)
+		return Response(encoded_token)
 
-	def post(self, request, client_data):
-		# create. Creates an annotation object and returns a 303.
-		obj = Annotation()
-		obj.owner = request.user if request.user.is_authenticated() else None
-		try:
-			obj.document = Document.objects.get(id=client_data.get("document"))
-		except:
-			raise ValueError("Invalid or missing 'document' value passed in annotation data.")
-		obj.set_guid()
-		obj.data = "{ }"
-		obj.update_from_json(client_data)
-		obj.save()
-		return obj.as_json(request.user) # Spec wants redirect but warns of browser bugs, so return the object.
+	@classmethod
+	def generate_token(cls, user_id):
+	    return jwt.encode({
+	      'consumerKey': cls.CONSUMER_KEY,
+	      'userId': user_id,
+	      'issuedAt': _now().isoformat() + 'Z',
+	      'ttl': cls.CONSUMER_TTL
+	    }, cls.CONSUMER_SECRET)
 
-class Annot(BaseStorageView):
-	http_method_names = ['get', 'put', 'delete']
-
-	def get(self, request, guid):
-		# read. Returns the annotation.
-		obj = Annotation.objects.get(guid=guid) # exception caught by base view
-		return obj.as_json(request.user)
-
-	def put(self, request, client_data, guid):
-		# update. Updates the annotation.
-		obj = Annotation.objects.get(guid=guid) # exception caught by base view
-
-		if not obj.can_edit(request.user):
-			raise PermissionDenied("You do not have permission to modify someone else's annotation.")
-
-		obj.update_from_json(client_data)
-		obj.save()
-		return obj.as_json(request.user) # Spec wants redirect but warns of browser bugs, so return the object.
-
-	def delete(self, request, guid):
-		obj = Annotation.objects.get(guid=guid) # exception caught by base view
-
-		if not obj.can_edit(request.user):
-			raise PermissionDenied("You do not have permission to delete someone else's annotation.")
-
-		obj.delete()
-		return None # response handled by the base view
-
-class Search(BaseStorageView):
-	http_method_names = ['get']
-	def get(self, request):
-		try:
-			document = Document.objects.get(id=request.GET.get("document"))
-		except:
-			raise ValueError("Invalid or missing 'document' value passed in the query string.")
-		qs = Annotation.objects.filter(document=document)
-		return {
-			"total": qs.count(),
-			"rows": Annotation.as_list(qs=qs, user=request.user)
-		}
-
-class EditorView(TemplateView):
-	template_name = 'annotator/editor.html'
-	def get_context_data(self, **kwargs):
-		context = super(EditorView, self).get_context_data(**kwargs)
-		context['storage_api_base_url'] = reverse('annotator.root')[0:-1] # chop off trailing slash
-		context['document'] = get_object_or_404(Document, id=kwargs['doc_id'])
-		return context
+	@staticmethod
+	def _now():
+	    return datetime.datetime.utcnow().replace(microsecond=0)
