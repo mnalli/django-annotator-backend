@@ -24,32 +24,10 @@ class AnnotationList(generics.ListAPIView, mixins.CreateModelMixin):
 	permission_classes = (IsAuthenticated,)
 
 	def post(self, request, *args, **kwargs):
-		# print(request.data)
 		return self.create(request, *args, **kwargs)
 
-	# def initial(self, request, *args, **kwargs):
-	# 	"""
-	# 	Runs anything that needs to occur prior to calling the method handler.
-	# 	"""
-	# 	self.format_kwarg = self.get_format_suffix(**kwargs)
-	#
-	# 	print('REQUEST ----', request.data)
-	# 	# Perform content negotiation and store the accepted info on the request
-	# 	neg = self.perform_content_negotiation(request)
-	# 	request.accepted_renderer, request.accepted_media_type = neg
-	#
-	# 	# Determine the API version, if versioning is in use.
-	# 	version, scheme = self.determine_version(request, *args, **kwargs)
-	# 	request.version, request.versioning_scheme = version, scheme
-	#
-	# 	# Ensure that the incoming request is permitted
-	# 	self.perform_authentication(request)
-	# 	self.check_permissions(request)
-	# 	self.check_throttles(request)
-	# 	print('authentication success')
 
-
-class AnnotationDetail(generics.RetrieveDestroyAPIView, mixins.UpdateModelMixin):
+class AnnotationDetail(generics.RetrieveAPIView, mixins.UpdateModelMixin, mixins.DestroyModelMixin):
 
 	queryset = Annotation.objects.all()
 	serializer_class = AnnotationSerializer
@@ -61,6 +39,9 @@ class AnnotationDetail(generics.RetrieveDestroyAPIView, mixins.UpdateModelMixin)
 	# Don't know if useful
 	def patch(self, request, *args, **kwargs):
 		return self.partial_update(request, *args, **kwargs)
+
+	def delete(self, request, *args, **kwargs):
+		return self.destroy(request, *args, **kwargs)
 
 
 from .pagination import SearchPagination
@@ -74,37 +55,26 @@ class SearchView(generics.ListAPIView):
 
 	def get_queryset(self):
 		queryset = self.queryset
+		applicant = self.request.user
+		# selecting annotation from current document
 		uri = self.request.GET['uri']
-		return queryset.all().filter(uri=uri)
-
-
-import jwt, datetime
-from django.contrib.auth.decorators import login_required # FIXME
-
-class TokenView(APIView):
-
-	# Replace these with your details
-	CONSUMER_KEY = 'yourconsumerkey'
-	CONSUMER_SECRET = 'yourconsumersecret'
-
-	# Only change this if you're sure you know what you're doing
-	CONSUMER_TTL = 86400
-
-	@login_required
-	def get(self, request):
-		encoded_token = self.generate_token(request.user)
-		print(encoded_token)
-		return Response(encoded_token)
+		notpurged = queryset.all().filter(uri=uri)
+		# checking permissions
+		return self.permission_filter(notpurged, applicant.pk)
 
 	@classmethod
-	def generate_token(cls, user_id):
-	    return jwt.encode({
-	      'consumerKey': cls.CONSUMER_KEY,
-	      'userId': user_id,
-	      'issuedAt': _now().isoformat() + 'Z',
-	      'ttl': cls.CONSUMER_TTL
-	    }, cls.CONSUMER_SECRET)
+	def permission_filter(cls, queryset, applicant_pk):
+		filtered_queryset = []
+		for annotation in queryset:
+			# check if the applicant has read permission
+			read_permission_owners = annotation.permissions['read']
+			if cls.can_view(read_permission_owners, applicant_pk):
+				filtered_queryset += [annotation]
+		return filtered_queryset
 
 	@staticmethod
-	def _now():
-	    return datetime.datetime.utcnow().replace(microsecond=0)
+	def can_view(read_permission_owners, applicant_pk):
+		if read_permission_owners:
+			return applicant_pk in read_permission_owners
+		else:
+			return True

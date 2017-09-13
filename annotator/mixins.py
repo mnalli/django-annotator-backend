@@ -8,6 +8,8 @@ from django.urls import reverse
 from rest_framework.response import Response
 from rest_framework import status
 
+from .models import Document
+
 class CreateModelMixin(object):
     """
     Create a model instance.
@@ -16,6 +18,25 @@ class CreateModelMixin(object):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        print('----------', request.session['current_article_revid'])
+
+        try:
+            saved_revision = Document.objects.get(revid=request.session['current_article_revid'])
+            # FIXME: critical section
+            saved_revision.number_of_annotations += 1
+            print("Number of annotation ==", saved_revision.number_of_annotations)
+            saved_revision.save()
+        except Document.DoesNotExist:
+        # se il documento non esiste (è la prima annotazione per il documento)
+            from RAVE_site.services.wikipedia import parse_revid, process_html
+            # get object from wikipedia
+            data = parse_revid(request.session['current_article_revid'])
+            Document.objects.create(title= data['true_title'],
+                                    revid=request.session['current_article_revid'],
+                                    html_text=process_html(data['html_text']),
+                                    is_in_category=data['is_in_category'])
+
         instance = self.perform_create(serializer)
         headers = self.get_success_headers(instance)
         return Response(serializer.data, status=status.HTTP_303_SEE_OTHER, headers=headers)
@@ -58,3 +79,29 @@ class UpdateModelMixin(object):
 
     def get_success_headers(self, instance):
         return {'Location': instance.get_absolute_url()}
+
+
+class DestroyModelMixin(object):
+    """
+    Destroy a model instance.
+    """
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        # The document MUST exist
+        saved_revision = Document.objects.get(revid=request.session['current_article_revid'])
+        #
+        if saved_revision.number_of_annotations == 1:
+            print('deleting document')
+            saved_revision.delete()
+        else:
+            # FIXME: critical section
+            saved_revision.number_of_annotations -= 1
+            saved_revision.save()
+            print('number of annotations ==', saved_revision.number_of_annotations)
+
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def perform_destroy(self, instance):
+        instance.delete()

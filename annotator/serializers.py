@@ -60,6 +60,7 @@ class AnnotationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Annotation
         fields = '__all__'
+        # exclude = ('document',)
         read_only_fields = ('id', 'created', 'updated')
 
 
